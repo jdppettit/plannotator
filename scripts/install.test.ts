@@ -2265,6 +2265,11 @@ case "$url" in
   *".sha256") printf '%s  plannotator\\n' "$STUB_CHECKSUM" ;;
   */releases/download/*) printf 'fake plannotator binary\\n' > "$out" ;;
   */attestations/sha256:*) cat "$STUB_ATT_JSON" ;;
+  */releases/latest)
+    [ -n "$STUB_LATEST_JSON" ] || exit 22
+    # install.sh calls this with -w '\\n%{http_code}' and reads the status
+    # off the last line.
+    cat "$STUB_LATEST_JSON"; printf '\\n200' ;;
   *) exit 22 ;;
 esac
 `,
@@ -3006,5 +3011,52 @@ describe("binary replacement is safe while plannotator is running", () => {
     const place = script.indexOf('move /y "!TEMP_FILE!" "!INSTALL_PATH!"');
     expect(aside).toBeGreaterThan(0);
     expect(place).toBeGreaterThan(aside);
+  });
+});
+
+describe("install.sh resolves the latest release tag", () => {
+  // GitHub's releases/latest API can answer with minified single-line JSON.
+  // The tag must still come from "tag_name", not the first quoted value on
+  // the line (the release "url"), or the binary download 404s.
+  const release = {
+    url: "https://api.github.com/repos/backnotprop/plannotator/releases/1",
+    html_url: "https://github.com/backnotprop/plannotator/releases/tag/v99.9.9",
+    id: 1,
+    tag_name: "v99.9.9",
+    name: "v99.9.9",
+  };
+
+  function runLatest(body: string) {
+    const sandbox = setupInstallSandbox({ gh: "pass-all" });
+    const latestJson = join(sandbox.home, "latest.json");
+    writeFileSync(latestJson, body);
+    const r = Bun.spawnSync(
+      ["bash", join(scriptsDir, "install.sh"), "--minimal", "--skip-attestation", "--non-interactive"],
+      {
+        env: {
+          HOME: sandbox.home,
+          TMPDIR: join(sandbox.home, "tmp"),
+          PATH: `${sandbox.stub}:/usr/bin:/bin`,
+          STUB_CHECKSUM: FAKE_BINARY_SHA256,
+          STUB_ATT_JSON: ATTESTATION_FIXTURE,
+          STUB_LATEST_JSON: latestJson,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    return { code: r.exitCode, out: r.stdout.toString() + r.stderr.toString() };
+  }
+
+  test("minified single-line response", () => {
+    const { code, out } = runLatest(JSON.stringify(release));
+    expect(out).toContain("Installing plannotator v99.9.9...");
+    expect(code).toBe(0);
+  });
+
+  test("pretty-printed response", () => {
+    const { code, out } = runLatest(JSON.stringify(release, null, 2));
+    expect(out).toContain("Installing plannotator v99.9.9...");
+    expect(code).toBe(0);
   });
 });

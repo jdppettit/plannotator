@@ -420,7 +420,11 @@ if [ "$VERSION" = "latest" ]; then
         _api_code="${_api_body##*$'\n'}"
     fi
     if [ "$_api_code" = "200" ]; then
-        latest_tag=$(printf '%s' "$_api_body" | grep '"tag_name"' | cut -d'"' -f4)
+        # The API may return minified single-line JSON, so match the
+        # "tag_name": "<tag>" pair itself rather than the line it is on;
+        # a line-based grep | cut picks up the first quoted value on the
+        # line instead (the release "url"), and the download then 404s.
+        latest_tag=$(printf '%s' "$_api_body" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | cut -d'"' -f4)
     else
         latest_tag=""
     fi
